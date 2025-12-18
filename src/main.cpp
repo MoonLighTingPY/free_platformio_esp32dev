@@ -425,9 +425,26 @@ void loop() {
         // Read current temperature
         tag_temp = readTemperature();
 
-        // Send DDATA message with current values
-        sendDDATA();
-        Serial.println("Published DDATA to MQTT");
+        // Publish telemetry to MQTT (simple format)
+        StaticJsonDocument<512> doc;
+        doc["temp"] = tag_temp;
+        doc["sp1"] = tag_sp1;
+        doc["sp2"] = tag_sp2;
+        doc["sp3"] = tag_sp3;
+        doc["eco_sp"] = tag_eco_sp;
+        doc["mode"] = tag_mode;
+        doc["fan1_state"] = tag_fan1_state;
+        doc["fan2_state"] = tag_fan2_state;
+        doc["fan3_state"] = tag_fan3_state;
+        doc["fan1_speed"] = tag_fan1_speed;
+        doc["fan2_speed"] = tag_fan2_speed;
+        doc["fan3_speed"] = tag_fan3_speed;
+
+        char jsonBuffer[512];
+        size_t n = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
+        client.publish("ventilation", jsonBuffer, n);
+
+        Serial.println("Published telemetry to MQTT");
     }
 
     // Servo control based on mode and sp1
