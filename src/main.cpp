@@ -483,7 +483,7 @@ void loop() {
         } else {
             // At least one fan is on - spin servo at constant speed
             // Fixed delay of 15ms per step for constant speed
-            int stepDelay = 15;
+            int stepDelay = 5;
 
             if (now - lastServoUpdate > stepDelay) {
                 lastServoUpdate = now;
