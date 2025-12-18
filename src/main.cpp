@@ -470,21 +470,20 @@ void loop() {
         Serial.println("Published telemetry to MQTT");
     }
 
-    // Servo control based on mode and sp1
+    // Servo control based on fan1_state (constant speed when on)
     if (myServo.attached()) {
-        // Mode controls servo on/off (0 = off, 1 = on)
-        if (tag_mode == 0) {
-            // Servo off - keep it at 0 degrees
+        // Check if any fan is active (OR all fan states)
+        bool anyFanActive = tag_fan1_state || tag_fan2_state || tag_fan3_state;
+        
+        if (!anyFanActive) {
+            // All fans off - keep servo at 0 degrees
             myServo.write(0);
+            servoAngle = 0;
+            servoDirection = 1;
         } else {
-            // Servo on - speed controlled by sp1
-            // Clamp sp1 to [10, 40]
-            float sp1_clamped = tag_sp1;
-            if (sp1_clamped < 10) sp1_clamped = 10;
-            if (sp1_clamped > 40) sp1_clamped = 40;
-
-            // Map sp1: 10 (slowest) -> 50ms, 40 (fastest) -> 2ms
-            int stepDelay = map((int)sp1_clamped, 10, 40, 50, 2);
+            // At least one fan is on - spin servo at constant speed
+            // Fixed delay of 15ms per step for constant speed
+            int stepDelay = 15;
 
             if (now - lastServoUpdate > stepDelay) {
                 lastServoUpdate = now;
