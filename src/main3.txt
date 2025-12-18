@@ -1,0 +1,377 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+#include <ESP32Servo.h>
+
+// LED pins
+#define LED1 5
+#define LED2 18
+#define LED3 19
+
+// Servo pin
+#define SERVO_PIN 32
+
+#define SSID "pussyslayer47"
+#define PASSWORD "28021981"
+
+#define MQTT_SERVER "172.20.10.13"
+#define MQTT_PORT 1883
+#define MQTT_TOPIC_BASE "ventilation"
+
+// DHT sensor settings
+#define DHTPIN 27
+#define DHTTYPE DHT11
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+DHT dht(DHTPIN, DHTTYPE);
+
+// Servo object
+Servo myServo;
+
+// Tag variables - read from Ignition
+float tag_temp = 25.0;
+int tag_mode = 0;
+float tag_sp1 = 22.0;
+float tag_sp2 = 23.0;
+float tag_sp3 = 24.0;
+float tag_eco_sp = 21.0;
+
+// Fan control outputs
+bool tag_fan1_room1 = false;
+bool tag_fan2_room2 = false;
+bool tag_fan3_room3 = false;
+
+int tag_fan1_speed_level = 0;
+int tag_fan2_speed_level = 0;
+int tag_fan3_speed_level = 0;
+
+// Structure for fan logic result
+struct FanLogicResult {
+    bool state;
+    int speed;
+    float cooling;
+};
+
+// Fan logic function
+FanLogicResult calculate_fan_logic(float temp, float setpoint) {
+    float delta = temp - setpoint;
+    if (delta <= 0) {
+        return {false, 0, 0.0f};
+    } else if (delta < 5) {
+        return {true, 1, 0.3f};
+    } else if (delta < 10) {
+        return {true, 2, 0.6f};
+    } else {
+        return {true, 3, 0.9f};
+    }
+}
+
+// Placeholder for actual ventilator control
+void spinVentilators(bool fan1, bool fan2, bool fan3, int speed1, int speed2, int speed3) {
+    // TODO: Implement PWM or relay control
+    Serial.printf("Fan1: %d (speed %d), Fan2: %d (speed %d), Fan3: %d (speed %d)\n", 
+                  fan1, speed1, fan2, speed2, fan3, speed3);
+}
+
+// MQTT Callback - receives messages from Ignition
+void callback(char* topic, byte* payload, unsigned int length) {
+    char message[256];
+    snprintf(message, sizeof(message), "%.*s", (int)length, (const char*)payload);
+    
+    Serial.print("MQTT received [");
+    Serial.print(topic);
+    Serial.print("]: ");
+    Serial.println(message);
+
+    // Parse setpoint topics
+    if (strstr(topic, "Setpoint1")) {
+        tag_sp1 = atof(message);
+        Serial.printf("Updated Setpoint1: %.2f\n", tag_sp1);
+    } 
+    else if (strstr(topic, "Setpoint2")) {
+        tag_sp2 = atof(message);
+        Serial.printf("Updated Setpoint2: %.2f\n", tag_sp2);
+    } 
+    else if (strstr(topic, "Setpoint3")) {
+        tag_sp3 = atof(message);
+        Serial.printf("Updated Setpoint3: %.2f\n", tag_sp3);
+    } 
+    else if (strstr(topic, "econom_setpoint")) {
+        tag_eco_sp = atof(message);
+        Serial.printf("Updated Eco Setpoint: %.2f\n", tag_eco_sp);
+    } 
+    else if (strstr(topic, "Mode")) {
+        tag_mode = atoi(message);
+        Serial.printf("Updated Mode: %d\n", tag_mode);
+    }
+    
+    // Toggle LEDs based on temperature
+    if (tag_temp < 20.0) {
+        digitalWrite(LED1, HIGH);
+        digitalWrite(LED2, LOW);
+        digitalWrite(LED3, LOW);
+    } else if (tag_temp < 25.0) {
+        digitalWrite(LED1, LOW);
+        digitalWrite(LED2, HIGH);
+        digitalWrite(LED3, LOW);
+    } else {
+        digitalWrite(LED1, LOW);
+        digitalWrite(LED2, LOW);
+        digitalWrite(LED3, HIGH);
+    }
+}
+
+void setup_wifi() {
+    delay(10);
+    Serial.println("\n\nStarting WiFi connection...");
+    Serial.print("Connecting to: ");
+    Serial.println(SSID);
+
+    WiFi.begin(SSID, PASSWORD);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+
+    Serial.println("");
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("WiFi connected!");
+        Serial.print("IP address: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("Failed to connect to WiFi");
+    }
+}
+
+void reconnect() {
+    while (!client.connected()) {
+        Serial.print("Connecting to MQTT broker...");
+        if (client.connect("ESP32_Ventilation")) {
+            Serial.println("connected!");
+            
+            // Subscribe to Ignition setpoint topics
+            client.subscribe("ventilation/HMI/Setpoint1");
+            client.subscribe("ventilation/HMI/Setpoint2");
+            client.subscribe("ventilation/HMI/Setpoint3");
+            client.subscribe("ventilation/HMI/econom_setpoint");
+            client.subscribe("ventilation/HMI/Mode");
+            
+            Serial.println("Subscribed to HMI topics");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" - retrying in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    delay(1000);
+    
+    pinMode(LED1, OUTPUT);
+    pinMode(LED2, OUTPUT);
+    pinMode(LED3, OUTPUT);
+    digitalWrite(LED1, LOW);
+    digitalWrite(LED2, LOW);
+    digitalWrite(LED3, LOW);
+
+    // Initialize servo
+    ESP32PWM::allocateTimer(0);
+    ESP32PWM::allocateTimer(1);
+    ESP32PWM::allocateTimer(2);
+    ESP32PWM::allocateTimer(3);
+    myServo.setPeriodHertz(50);    // Standard 50 Hz servo
+    myServo.attach(SERVO_PIN, 1000, 2000);  // Attach to pin 21 with min/max pulse widths
+
+    dht.begin();
+    setup_wifi();
+    
+    client.setServer(MQTT_SERVER, MQTT_PORT);
+    client.setCallback(callback);
+}
+
+// Averaging buffers
+#define AVG_WINDOW 50
+float tempBuffer[AVG_WINDOW] = {0};
+float sp1Buffer[AVG_WINDOW] = {0};
+int avgIndex = 0;
+int avgCount = 0;
+
+// Read temperature from DHT or simulate
+float readTemperature() {
+    static float temp = 19.5f;
+    static unsigned long lastUpdate = 0;
+    static float phase = 0.0f;
+    unsigned long now = millis();
+
+    if (now - lastUpdate > 1000) { // update every second
+        lastUpdate = now;
+        // Smooth sine wave base
+        phase += 0.15f + ((float)random(-10, 10) / 100.0f); // randomize phase speed a bit
+        if (phase > 6.28319f) phase -= 6.28319f; // keep phase in [0, 2pi]
+        float base = 19.5f + 2.0f * sin(phase); // center at 19.5, amplitude 2
+
+        // Add a small random walk
+        temp += ((float)random(-10, 11)) / 100.0f; // random step [-0.10, 0.10]
+        // Pull temp towards base
+        temp += (base - temp) * 0.1f;
+
+        // Clamp to [17, 22]
+        if (temp < 17.0f) temp = 17.0f;
+        if (temp > 22.0f) temp = 22.0f;
+    }
+    return temp;
+}
+
+void loop() {
+    // Maintain MQTT connection
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop();
+
+    static unsigned long lastSend = 0;
+    static unsigned long lastServoUpdate = 0;
+    static int servoAngle = 0;
+    static int servoDirection = 1; // 1 = increasing, -1 = decreasing
+    unsigned long now = millis();
+    
+    if (now - lastSend > 5000) {  // Send every 5 seconds
+        lastSend = now;
+
+        // Read current temperature
+        float temp = readTemperature();
+        tag_temp = temp;
+
+        // Averaging logic
+        tempBuffer[avgIndex] = temp;
+        sp1Buffer[avgIndex] = tag_sp1;
+        avgIndex = (avgIndex + 1) % AVG_WINDOW;
+        if (avgCount < AVG_WINDOW) avgCount++;
+
+        float sumTemp = 0.0f, sumSp1 = 0.0f;
+        for (int i = 0; i < avgCount; i++) {
+            sumTemp += tempBuffer[i];
+            sumSp1 += sp1Buffer[i];
+        }
+        float avgTemp = sumTemp / avgCount;
+        float avgSp1 = sumSp1 / avgCount;
+
+        // Fan control logic
+        bool fan_states[3] = {false, false, false};
+        int fan_speeds[3] = {0, 0, 0};
+        float total_cooling = 0.0f;
+
+        if (tag_mode == 0) {
+            // Off mode
+            fan_states[0] = fan_states[1] = fan_states[2] = false;
+            fan_speeds[0] = fan_speeds[1] = fan_speeds[2] = 0;
+            total_cooling = 0.0f;
+        } 
+        else if (tag_mode == 1) {
+            // Individual setpoint mode
+            FanLogicResult fan1 = calculate_fan_logic(temp, tag_sp1);
+            FanLogicResult fan2 = calculate_fan_logic(temp, tag_sp2);
+            FanLogicResult fan3 = calculate_fan_logic(temp, tag_sp3);
+
+            fan_states[0] = fan1.state;
+            fan_states[1] = fan2.state;
+            fan_states[2] = fan3.state;
+
+            fan_speeds[0] = fan1.speed;
+            fan_speeds[1] = fan2.speed;
+            fan_speeds[2] = fan3.speed;
+
+            total_cooling = fan1.cooling + fan2.cooling + fan3.cooling;
+        } 
+        else if (tag_mode == 2) {
+            // Eco mode - all fans use eco setpoint
+            FanLogicResult fan = calculate_fan_logic(temp, tag_eco_sp);
+            fan_states[0] = fan_states[1] = fan_states[2] = fan.state;
+            fan_speeds[0] = fan_speeds[1] = fan_speeds[2] = fan.speed;
+            total_cooling = fan.cooling * 3.0f;
+        }
+
+        // Update fan control outputs
+        tag_fan1_room1 = fan_states[0];
+        tag_fan2_room2 = fan_states[1];
+        tag_fan3_room3 = fan_states[2];
+        tag_fan1_speed_level = fan_speeds[0];
+        tag_fan2_speed_level = fan_speeds[1];
+        tag_fan3_speed_level = fan_speeds[2];
+
+        // Execute fan control (implement actual PWM/relay control here)
+        spinVentilators(tag_fan1_room1, tag_fan2_room2, tag_fan3_room3,
+                        tag_fan1_speed_level, tag_fan2_speed_level, tag_fan3_speed_level);
+
+        // Simulate temperature update
+        float new_temp = temp;
+        if (total_cooling == 0.0f) {
+            new_temp = temp + 1.0f;
+        } else {
+            new_temp = temp - total_cooling;
+        }
+
+        // Wrap temperature within bounds
+        if (new_temp > 40.0f) new_temp = 15.0f + (new_temp - 40.0f);
+        if (new_temp < 15.0f) new_temp = 40.0f - (15.0f - new_temp);
+
+        // Publish telemetry to MQTT (for InfluxDB/Grafana)
+        StaticJsonDocument<512> doc;
+        doc["temp"] = tag_temp;
+        doc["avgTemp"] = avgTemp;
+        doc["sp1"] = tag_sp1;
+        doc["sp2"] = tag_sp2;
+        doc["sp3"] = tag_sp3;
+        doc["eco_sp"] = tag_eco_sp;
+        doc["mode"] = tag_mode;
+        doc["fan1_state"] = tag_fan1_room1;
+        doc["fan2_state"] = tag_fan2_room2;
+        doc["fan3_state"] = tag_fan3_room3;
+        doc["fan1_speed"] = tag_fan1_speed_level;
+        doc["fan2_speed"] = tag_fan2_speed_level;
+        doc["fan3_speed"] = tag_fan3_speed_level;
+
+        char jsonBuffer[512];
+        size_t n = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
+        client.publish("ventilation", jsonBuffer, n);
+
+        Serial.println("Published telemetry to MQTT");
+    }
+
+    // Servo speed control based on temperature
+    if (myServo.attached()) {
+        float minTemp = 17.0f;
+        float maxTemp = 22.0f;
+        int minDelay = 20;   // slowest (ms per step)
+        int maxDelay = 1;    // fastest (ms per step)
+
+        // Clamp temperature
+        float t = tag_temp;
+        if (t < minTemp) t = minTemp;
+        if (t > maxTemp) t = maxTemp;
+
+        // Map temperature to delay (inverse of speed)
+        int stepDelay = map((int)(t * 100), (int)(minTemp * 100), (int)(maxTemp * 100), minDelay, maxDelay);
+
+        if (now - lastServoUpdate > stepDelay) {
+            lastServoUpdate = now;
+            myServo.write(servoAngle);
+            servoAngle += servoDirection;
+            if (servoAngle >= 180) {
+                servoAngle = 180;
+                servoDirection = -1;
+            } else if (servoAngle <= 0) {
+                servoAngle = 0;
+                servoDirection = 1;
+            }
+        }
+    }
+}
