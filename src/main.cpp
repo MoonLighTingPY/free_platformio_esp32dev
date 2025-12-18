@@ -467,6 +467,46 @@ void loop() {
         size_t n = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
         client.publish("ventilation", jsonBuffer, n);
 
+          // Publish individual tags to MQTT (instead of JSON)
+        char buffer[32];
+        
+        dtostrf(tag_temp, 1, 2, buffer);
+        client.publish("ventilation/temp", buffer, true);
+        
+        dtostrf(avgTemp, 1, 2, buffer);
+        client.publish("ventilation/avgTemp", buffer, true);
+        
+        dtostrf(tag_sp1, 1, 2, buffer);
+        client.publish("ventilation/sp1", buffer, true);
+        
+        dtostrf(avgSp1, 1, 2, buffer);
+        client.publish("ventilation/avgSp1", buffer, true);
+        
+        dtostrf(tag_sp2, 1, 2, buffer);
+        client.publish("ventilation/sp2", buffer, true);
+        
+        dtostrf(tag_sp3, 1, 2, buffer);
+        client.publish("ventilation/sp3", buffer, true);
+        
+        dtostrf(tag_eco_sp, 1, 2, buffer);
+        client.publish("ventilation/eco_sp", buffer, true);
+        
+        itoa(tag_mode, buffer, 10);
+        client.publish("ventilation/mode", buffer, true);
+        
+        client.publish("ventilation/fan1_state", tag_fan1_state ? "1" : "0", true);
+        client.publish("ventilation/fan2_state", tag_fan2_state ? "1" : "0", true);
+        client.publish("ventilation/fan3_state", tag_fan3_state ? "1" : "0", true);
+        
+        itoa(tag_fan1_speed, buffer, 10);
+        client.publish("ventilation/fan1_speed", buffer, true);
+        
+        itoa(tag_fan2_speed, buffer, 10);
+        client.publish("ventilation/fan2_speed", buffer, true);
+        
+        itoa(tag_fan3_speed, buffer, 10);
+        client.publish("ventilation/fan3_speed", buffer, true);
+
         Serial.println("Published telemetry to MQTT");
     }
 
