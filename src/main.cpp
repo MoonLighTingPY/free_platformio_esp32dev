@@ -446,77 +446,51 @@ void loop() {
         float avgTemp = sumTemp / avgCount;
         float avgSp1 = sumSp1 / avgCount;
 
-        // Publish individual tags to MQTT (instead of JSON)
-        char buffer[32];
-        
-        dtostrf(tag_temp, 1, 2, buffer);
-        client.publish("ventilation/temp", buffer, true);
-        
-        dtostrf(avgTemp, 1, 2, buffer);
-        client.publish("ventilation/avgTemp", buffer, true);
-        
-        dtostrf(tag_sp1, 1, 2, buffer);
-        client.publish("ventilation/sp1", buffer, true);
-        
-        dtostrf(avgSp1, 1, 2, buffer);
-        client.publish("ventilation/avgSp1", buffer, true);
-        
-        dtostrf(tag_sp2, 1, 2, buffer);
-        client.publish("ventilation/sp2", buffer, true);
-        
-        dtostrf(tag_sp3, 1, 2, buffer);
-        client.publish("ventilation/sp3", buffer, true);
-        
-        dtostrf(tag_eco_sp, 1, 2, buffer);
-        client.publish("ventilation/eco_sp", buffer, true);
-        
-        itoa(tag_mode, buffer, 10);
-        client.publish("ventilation/mode", buffer, true);
-        
-        client.publish("ventilation/fan1_state", tag_fan1_state ? "1" : "0", true);
-        client.publish("ventilation/fan2_state", tag_fan2_state ? "1" : "0", true);
-        client.publish("ventilation/fan3_state", tag_fan3_state ? "1" : "0", true);
-        
-        itoa(tag_fan1_speed, buffer, 10);
-        client.publish("ventilation/fan1_speed", buffer, true);
-        
-        itoa(tag_fan2_speed, buffer, 10);
-        client.publish("ventilation/fan2_speed", buffer, true);
-        
-        itoa(tag_fan3_speed, buffer, 10);
-        client.publish("ventilation/fan3_speed", buffer, true);
+        // Publish telemetry to MQTT (simple format)
+        StaticJsonDocument<512> doc;
+        doc["temp"] = tag_temp;
+        doc["avgTemp"] = avgTemp;
+        doc["sp1"] = tag_sp1;
+        doc["avgSp1"] = avgSp1;
+        doc["sp2"] = tag_sp2;
+        doc["sp3"] = tag_sp3;
+        doc["eco_sp"] = tag_eco_sp;
+        doc["mode"] = tag_mode;
+        doc["fan1_state"] = tag_fan1_state;
+        doc["fan2_state"] = tag_fan2_state;
+        doc["fan3_state"] = tag_fan3_state;
+        doc["fan1_speed"] = tag_fan1_speed;
+        doc["fan2_speed"] = tag_fan2_speed;
+        doc["fan3_speed"] = tag_fan3_speed;
+
+        char jsonBuffer[512];
+        size_t n = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
+        client.publish("ventilation", jsonBuffer, n);
 
         Serial.println("Published telemetry to MQTT");
     }
 
-    // Servo control - spin speed based on active setpoint
-    // Logic: Higher temperature above setpoint = faster spin = lower delay
-    // Setpoint is the temperature threshold; when temp > setpoint, servo spins
+    // Servo control based on fan1_state (constant speed when on)
     if (myServo.attached()) {
-        // Determine which setpoint to use based on fan states
-        float activeSetpoint = 0;
+        // Check if any fan is active (OR all fan states)
+        bool anyFanActive = tag_fan1_state || tag_fan2_state || tag_fan3_state;
         
-        if (tag_fan1_state) activeSetpoint = tag_sp1;
-        else if (tag_fan2_state) activeSetpoint = tag_sp2;
-        else if (tag_fan3_state) activeSetpoint = tag_sp3;
-        
-        if (activeSetpoint == 0 || tag_temp <= activeSetpoint) {
-            // No fans active OR temp below setpoint - stop servo at 0
+        if (!anyFanActive) {
+            // All fans off - keep servo at 0 degrees
             myServo.write(0);
             servoAngle = 0;
             servoDirection = 1;
         } else {
-            // Temp is ABOVE setpoint - calculate speed
-            // Map setpoint range [10-40] to delay [15ms - 5ms]
-            // Higher setpoint = faster spin (lower delay)
-            int stepDelay = map((int)activeSetpoint, 10, 40, 15, 5);
-            stepDelay = constrain(stepDelay, 5, 15);
+            // At least one fan is on - spin servo at constant speed
+            // Fixed delay of 15ms per step for constant speed
+            int stepDelay = 5;
 
             if (now - lastServoUpdate > stepDelay) {
                 lastServoUpdate = now;
                 myServo.write(servoAngle);
                 servoAngle += servoDirection;
 
+                // Reverse direction at limits
                 if (servoAngle >= 180) {
                     servoAngle = 180;
                     servoDirection = -1;
