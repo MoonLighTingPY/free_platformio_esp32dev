@@ -385,6 +385,13 @@ void setup() {
     client.setCallback(callback);
 }
 
+// Averaging buffers
+#define AVG_WINDOW 50
+float tempBuffer[AVG_WINDOW] = {0};
+float sp1Buffer[AVG_WINDOW] = {0};
+int avgIndex = 0;
+int avgCount = 0;
+
 // Read temperature from DHT or simulate
 float readTemperature() {
     static float temp = 19.5f;
@@ -425,10 +432,26 @@ void loop() {
         // Read current temperature
         tag_temp = readTemperature();
 
+        // Averaging logic
+        tempBuffer[avgIndex] = tag_temp;
+        sp1Buffer[avgIndex] = tag_sp1;
+        avgIndex = (avgIndex + 1) % AVG_WINDOW;
+        if (avgCount < AVG_WINDOW) avgCount++;
+
+        float sumTemp = 0.0f, sumSp1 = 0.0f;
+        for (int i = 0; i < avgCount; i++) {
+            sumTemp += tempBuffer[i];
+            sumSp1 += sp1Buffer[i];
+        }
+        float avgTemp = sumTemp / avgCount;
+        float avgSp1 = sumSp1 / avgCount;
+
         // Publish telemetry to MQTT (simple format)
         StaticJsonDocument<512> doc;
         doc["temp"] = tag_temp;
+        doc["avgTemp"] = avgTemp;
         doc["sp1"] = tag_sp1;
+        doc["avgSp1"] = avgSp1;
         doc["sp2"] = tag_sp2;
         doc["sp3"] = tag_sp3;
         doc["eco_sp"] = tag_eco_sp;
