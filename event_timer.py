@@ -69,8 +69,8 @@ elif mode == 1:
     fan2_logic = calculate_fan_logic(temp, sp2)
     fan3_logic = calculate_fan_logic(temp, sp3)
     
-    # Do NOT invert the state in mode 1
-    values_to_write_state = [fan1_logic[0], fan2_logic[0], fan3_logic[0]]
+    # Invert the state in mode 1
+    values_to_write_state = [not fan1_logic[0], not fan2_logic[0], not fan3_logic[0]]
     values_to_write_speed = [fan1_logic[1], fan2_logic[1], fan3_logic[1]]
     
     try:
@@ -83,8 +83,11 @@ elif mode == 1:
 elif mode == 2 or mode == 3:
     fan_logic = calculate_fan_logic(temp, eco_sp) 
     
-    # Invert the state for all fans in economy mode
-    values_to_write_state = [not fan_logic[0], not fan_logic[0], not fan_logic[0]]
+    # Invert the state for all fans in economy mode (Mode 2 only)
+    if mode == 2:
+        values_to_write_state = [not fan_logic[0], not fan_logic[0], not fan_logic[0]]
+    else:
+        values_to_write_state = [fan_logic[0], fan_logic[0], fan_logic[0]]
     values_to_write_speed = [fan_logic[1], fan_logic[1], fan_logic[1]]
     
     try:
